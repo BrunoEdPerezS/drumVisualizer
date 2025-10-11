@@ -1,0 +1,14 @@
+.vs/
+**/*.pdb
+**/*.ilk
+**/*.ipch
+**/*.VC.db
+**/*.db
+**/*.opendb
+Builds/**/Debug/
+Builds/**/Release/
+Builds/**/x64/**
+**/*.lib
+**/*.exp
+**/*.obj
+**/*.log
