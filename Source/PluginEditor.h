@@ -25,11 +25,11 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    // Listener overrides para el patr髇 observer
+    // Listener overrides para el patr贸n observer
     void textEditorTextChanged (juce::TextEditor& editor) override;
     void comboBoxChanged (juce::ComboBox* comboBoxThatHasChanged) override;
 
-    // Variables p鷅licas para acceso desde otras clases
+    // Variables p煤blicas para acceso desde otras clases
     int bpmVALUE = 120;
     float speedVALUE = 1.0f;
     juce::String timefigVALUE = "1/4";
@@ -37,23 +37,49 @@ public:
 private:
     // Widgets del primer contenedor (topFrame)
     juce::TextEditor textEditor; // Entrada de texto
-    juce::TextButton exploreButton { "Explorar" }; // Bot髇 "Explorar"
-    juce::TextButton loadMidiButton { "Cargar MIDI" }; // Bot髇 "Cargar MIDI"
+    juce::TextButton exploreButton { "Explorar" }; // Bot贸n "Explorar"
+    juce::TextButton loadMidiButton { "Cargar MIDI" }; // Bot贸n "Cargar MIDI"
 
     // Widgets del segundo contenedor (middleFrame)
     juce::Label bpmLabel; // Label para "BPM SET"
     juce::TextEditor bpmEditor; // Input de texto para BPM (solo acepta int)
     juce::Label speedLabel; // Label para "VELOCIDAD"
     juce::ComboBox speedComboBox; // Lista desplegable para Speed
-    juce::TextButton playPauseButton { "PLAY/PAUSE" }; // Bot髇 Play/Pause
-    juce::TextButton stopButton { "STOP" }; // Bot髇 Stop
+    juce::TextButton playPauseButton { "PLAY/PAUSE" }; // Bot贸n Play/Pause
+    juce::TextButton stopButton { "STOP" }; // Bot贸n Stop
     juce::Label timeFigLabel; // Label para "TIME FIGURE"
     juce::ComboBox timeFigComboBox; // Lista desplegable para Time Fig
 
-    // M閠odos privados para manejar cambios
+    // Variables para el piano roll
+    juce::Rectangle<int> pianoRollArea;
+    double timeZoom = 100.0; // Pixels per second
+    int noteHeight = 10; // Altura de cada nota en pixels
+    bool showPianoRoll = false;
+
+    // M茅todos privados para manejar cambios
     void updateBpmValue();
     void updateSpeedValue();
     void updateTimeFigValue();
+
+    // M茅todos para manejo de archivos MIDI
+    void openFileChooser();
+    void loadMidiFile();
+    bool validateFilePath(const juce::String& path);
+    void showMessage(const juce::String& title, const juce::String& message);
+    void updateUIAfterMidiLoad();
+
+    // M茅todos para el piano roll
+    void drawPianoRoll(juce::Graphics& g, const juce::Rectangle<int>& area);
+    void drawPianoKeys(juce::Graphics& g, const juce::Rectangle<int>& keyArea, int lowestNote, int highestNote);
+    void drawMidiNotes(juce::Graphics& g, const juce::Rectangle<int>& noteArea, int lowestNote, int highestNote);
+    void drawTimeGrid(juce::Graphics& g, const juce::Rectangle<int>& area);
+    double timeToX(double timeInSeconds, const juce::Rectangle<int>& area) const;
+    int noteToY(int noteNumber, int lowestNote, int highestNote, const juce::Rectangle<int>& area) const;
+    juce::String getNoteNameFromNumber(int noteNumber) const;
+
+    // Variables para manejo de archivos
+    juce::String lastBrowsedDirectory;
+    std::unique_ptr<juce::FileChooser> fileChooser;
 
     // This reference is provided as a quick way for your editor to
     // access the processor object that created it.

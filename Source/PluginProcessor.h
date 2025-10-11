@@ -53,7 +53,29 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+    //==============================================================================
+    // Funciones para manejo de archivos MIDI
+    bool loadMidiFile (const juce::File& file);
+    void clearMidiData();
+    bool hasMidiLoaded() const;
+    juce::String getLoadedFileName() const;
+    int getNumTracks() const;
+    double getTempoFromMidi() const;
+    double getLengthInSeconds() const;
+
+    // Funciones para obtener datos MIDI para el piano roll
+    const juce::MidiFile& getMidiFile() const;
+    juce::Array<juce::MidiMessage> getAllNoteEvents() const;
+    int getLowestNote() const;
+    int getHighestNote() const;
+
 private:
     //==============================================================================
+    // Variables para manejo de archivos MIDI
+    juce::MidiFile midiFile;
+    juce::File loadedMidiFile;
+    bool midiLoaded = false;
+    double sampleRate = 44100.0;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DrumVisualizerAudioProcessor)
 };

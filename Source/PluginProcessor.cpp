@@ -93,8 +93,8 @@ void DrumVisualizerAudioProcessor::changeProgramName (int index, const juce::Str
 //==============================================================================
 void DrumVisualizerAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    // Use this method as the place to do any pre-playback
-    // initialisation that you need..
+    // Guardamos el sample rate para uso en funciones MIDI
+    this->sampleRate = sampleRate;
 }
 
 void DrumVisualizerAudioProcessor::releaseResources()
@@ -181,6 +181,218 @@ void DrumVisualizerAudioProcessor::setStateInformation (const void* data, int si
 {
     // You should use this method to restore your parameters from this memory block,
     // whose contents will have been created by the getStateInformation() call.
+}
+
+//==============================================================================
+// Funciones para manejo de archivos MIDI
+
+bool DrumVisualizerAudioProcessor::loadMidiFile(const juce::File& file)
+{
+    // Verifica que el archivo exista
+    if (!file.existsAsFile())
+    {
+        juce::Logger::writeToLog("Error: El archivo no existe - " + file.getFullPathName());
+        return false;
+    }
+    
+    // Verifica la extensión del archivo
+    juce::String extension = file.getFileExtension().toLowerCase();
+    if (extension != ".mid" && extension != ".midi")
+    {
+        juce::Logger::writeToLog("Error: Formato de archivo no soportado - " + extension);
+        return false;
+    }
+    
+    // Intenta cargar el archivo MIDI
+    juce::FileInputStream inputStream(file);
+    if (!inputStream.openedOk())
+    {
+        juce::Logger::writeToLog("Error: No se pudo abrir el archivo - " + file.getFullPathName());
+        return false;
+    }
+    
+    // Lee el archivo MIDI
+    midiFile.clear();
+    if (!midiFile.readFrom(inputStream))
+    {
+        juce::Logger::writeToLog("Error: No se pudo leer el archivo MIDI - Archivo posiblemente dañado");
+        return false;
+    }
+    
+    // Si llegamos aquí, la carga fue exitosa
+    loadedMidiFile = file;
+    midiLoaded = true;
+    
+    // Log información del archivo cargado
+    juce::Logger::writeToLog("MIDI cargado exitosamente:");
+    juce::Logger::writeToLog("  Archivo: " + file.getFileName());
+    juce::Logger::writeToLog("  Número de pistas: " + juce::String(getNumTracks()));
+    juce::Logger::writeToLog("  Tempo: " + juce::String(getTempoFromMidi(), 2) + " BPM");
+    juce::Logger::writeToLog("  Duración: " + juce::String(getLengthInSeconds(), 2) + " segundos");
+    juce::Logger::writeToLog("  Rango de notas: " + juce::String(getLowestNote()) + " - " + juce::String(getHighestNote()));
+    
+    return true;
+}
+
+void DrumVisualizerAudioProcessor::clearMidiData()
+{
+    midiFile.clear();
+    loadedMidiFile = juce::File();
+    midiLoaded = false;
+    juce::Logger::writeToLog("Datos MIDI limpiados");
+}
+
+bool DrumVisualizerAudioProcessor::hasMidiLoaded() const
+{
+    return midiLoaded;
+}
+
+juce::String DrumVisualizerAudioProcessor::getLoadedFileName() const
+{
+    if (midiLoaded)
+        return loadedMidiFile.getFileName();
+    return "Ningún archivo cargado";
+}
+
+int DrumVisualizerAudioProcessor::getNumTracks() const
+{
+    if (midiLoaded)
+        return midiFile.getNumTracks();
+    return 0;
+}
+
+double DrumVisualizerAudioProcessor::getTempoFromMidi() const
+{
+    if (!midiLoaded)
+        return 120.0; // Tempo por defecto
+        
+    // Busca eventos de tempo en todas las pistas
+    for (int track = 0; track < midiFile.getNumTracks(); ++track)
+    {
+        const auto* trackPtr = midiFile.getTrack(track);
+        if (trackPtr != nullptr)
+        {
+            for (int i = 0; i < trackPtr->getNumEvents(); ++i)
+            {
+                const auto& event = trackPtr->getEventPointer(i)->message;
+                if (event.isTempoMetaEvent())
+                {
+                    return event.getTempoSecondsPerQuarterNote() > 0 ? 
+                           60.0 / event.getTempoSecondsPerQuarterNote() : 120.0;
+                }
+            }
+        }
+    }
+    
+    return 120.0; // Valor por defecto si no se encuentra tempo
+}
+
+double DrumVisualizerAudioProcessor::getLengthInSeconds() const
+{
+    if (!midiLoaded)
+        return 0.0;
+        
+    return midiFile.getLastTimestamp();
+}
+
+// Funciones para obtener datos MIDI para el piano roll
+const juce::MidiFile& DrumVisualizerAudioProcessor::getMidiFile() const
+{
+    return midiFile;
+}
+
+juce::Array<juce::MidiMessage> DrumVisualizerAudioProcessor::getAllNoteEvents() const
+{
+    juce::Array<juce::MidiMessage> noteEvents;
+    
+    if (!midiLoaded)
+        return noteEvents;
+    
+    // Iterar sobre todas las pistas
+    for (int track = 0; track < midiFile.getNumTracks(); ++track)
+    {
+        const auto* trackPtr = midiFile.getTrack(track);
+        if (trackPtr != nullptr)
+        {
+            // Iterar sobre todos los eventos de la pista
+            for (int i = 0; i < trackPtr->getNumEvents(); ++i)
+            {
+                const auto& event = trackPtr->getEventPointer(i)->message;
+                
+                // Solo agregar eventos de nota (Note On y Note Off)
+                if (event.isNoteOn() || event.isNoteOff())
+                {
+                    noteEvents.add(event);
+                }
+            }
+        }
+    }
+    
+    return noteEvents;
+}
+
+int DrumVisualizerAudioProcessor::getLowestNote() const
+{
+    if (!midiLoaded)
+        return 0;
+    
+    int lowestNote = 127; // Valor máximo MIDI
+    bool foundNote = false;
+    
+    // Iterar sobre todas las pistas
+    for (int track = 0; track < midiFile.getNumTracks(); ++track)
+    {
+        const auto* trackPtr = midiFile.getTrack(track);
+        if (trackPtr != nullptr)
+        {
+            // Iterar sobre todos los eventos de la pista
+            for (int i = 0; i < trackPtr->getNumEvents(); ++i)
+            {
+                const auto& event = trackPtr->getEventPointer(i)->message;
+                
+                // Solo considerar eventos de nota
+                if (event.isNoteOn())
+                {
+                    foundNote = true;
+                    lowestNote = std::min(lowestNote, event.getNoteNumber());
+                }
+            }
+        }
+    }
+    
+    return foundNote ? lowestNote : 0;
+}
+
+int DrumVisualizerAudioProcessor::getHighestNote() const
+{
+    if (!midiLoaded)
+        return 127;
+    
+    int highestNote = 0; // Valor mínimo MIDI
+    bool foundNote = false;
+    
+    // Iterar sobre todas las pistas
+    for (int track = 0; track < midiFile.getNumTracks(); ++track)
+    {
+        const auto* trackPtr = midiFile.getTrack(track);
+        if (trackPtr != nullptr)
+        {
+            // Iterar sobre todos los eventos de la pista
+            for (int i = 0; i < trackPtr->getNumEvents(); ++i)
+            {
+                const auto& event = trackPtr->getEventPointer(i)->message;
+                
+                // Solo considerar eventos de nota
+                if (event.isNoteOn())
+                {
+                    foundNote = true;
+                    highestNote = std::max(highestNote, event.getNoteNumber());
+                }
+            }
+        }
+    }
+    
+    return foundNote ? highestNote : 127;
 }
 
 //==============================================================================
