@@ -73,11 +73,16 @@ DrumVisualizerAudioProcessorEditor::DrumVisualizerAudioProcessorEditor (DrumVisu
 
     // Botón Play/Pause
     addAndMakeVisible(playPauseButton);
-    playPauseButton.onClick = [] { juce::Logger::writeToLog("Botón Play/Pause presionado"); };
+    playPauseButton.onClick = [this] { 
+        if (isPlaying) 
+            pausePlayback(); 
+        else 
+            startPlayback(); 
+    };
 
     // Botón Stop
     addAndMakeVisible(stopButton);
-    stopButton.onClick = [] { juce::Logger::writeToLog("Botón Stop presionado"); };
+    stopButton.onClick = [this] { stopPlayback(); };
 
     // Label para Time Figure
     addAndMakeVisible(timeFigLabel);
@@ -100,10 +105,16 @@ DrumVisualizerAudioProcessorEditor::DrumVisualizerAudioProcessorEditor (DrumVisu
 
     // Inicializar directorio por defecto para explorar archivos
     lastBrowsedDirectory = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getFullPathName();
+    
+    // Configurar la línea objetivo al 25% del ancho (las notas vendrán de la derecha)
+    targetLineX = static_cast<int>(getWidth() * 0.25f);
 }
 
 DrumVisualizerAudioProcessorEditor::~DrumVisualizerAudioProcessorEditor()
 {
+    // Parar el timer si está corriendo
+    stopTimer();
+    
     // Desregistrar listeners
     textEditor.removeListener(this);
     bpmEditor.removeListener(this);
@@ -156,7 +167,7 @@ void DrumVisualizerAudioProcessorEditor::paint (juce::Graphics& g)
     {
         // Área del piano roll con padding de 10 píxeles en todos los bordes
         pianoRollArea = bottomFrame.reduced(10);
-        drawPianoRoll(g, pianoRollArea);
+        drawSynthesiaPianoRoll(g, pianoRollArea);
     }
     else
     {
@@ -242,6 +253,37 @@ void DrumVisualizerAudioProcessorEditor::resized()
 }
 
 //==============================================================================
+// Timer callback para animación
+void DrumVisualizerAudioProcessorEditor::timerCallback()
+{
+    if (isPlaying && audioProcessor.hasMidiLoaded())
+    {
+        // Calcular delta time
+        juce::int64 currentSystemTime = juce::Time::getMillisecondCounter();
+        if (lastUpdateTime == 0)
+            lastUpdateTime = currentSystemTime;
+        
+        double deltaTime = (currentSystemTime - lastUpdateTime) / 1000.0; // Convertir a segundos
+        lastUpdateTime = currentSystemTime;
+        
+        // Actualizar tiempo actual basado en BPM y velocidad
+        double scrollSpeed = getScrollSpeed();
+        currentTime += deltaTime * scrollSpeed;
+        
+        // Verificar si hemos llegado al final del MIDI
+        double totalLength = audioProcessor.getLengthInSeconds();
+        if (currentTime >= totalLength)
+        {
+            stopPlayback();
+            resetToBeginning();
+        }
+        
+        // Redibujar para mostrar la animación
+        repaint();
+    }
+}
+
+//==============================================================================
 // Implementación del patrón Observer
 void DrumVisualizerAudioProcessorEditor::textEditorTextChanged(juce::TextEditor& editor)
 {
@@ -276,8 +318,23 @@ void DrumVisualizerAudioProcessorEditor::updateBpmValue()
     auto text = bpmEditor.getText();
     if (!text.isEmpty())
     {
-        bpmVALUE = text.getIntValue();
-        juce::Logger::writeToLog("BPM actualizado: " + juce::String(bpmVALUE));
+        int newBpm = text.getIntValue();
+        if (newBpm > 0 && newBpm <= 300) // Validar rango razonable
+        {
+            bpmVALUE = newBpm;
+            juce::Logger::writeToLog("BPM actualizado: " + juce::String(bpmVALUE));
+            
+            // Si está reproduciendo, la velocidad de scroll se actualizará automáticamente
+            if (isPlaying)
+            {
+                juce::Logger::writeToLog("Velocidad de scroll actualizada por cambio de BPM");
+            }
+        }
+        else
+        {
+            // Restaurar valor anterior si es inválido
+            bpmEditor.setText(juce::String(bpmVALUE));
+        }
     }
 }
 
@@ -286,8 +343,18 @@ void DrumVisualizerAudioProcessorEditor::updateSpeedValue()
     auto selectedText = speedComboBox.getText();
     if (!selectedText.isEmpty())
     {
-        speedVALUE = selectedText.getFloatValue();
-        juce::Logger::writeToLog("Speed actualizado: " + juce::String(speedVALUE));
+        float newSpeed = selectedText.getFloatValue();
+        if (newSpeed > 0 && newSpeed <= 5.0) // Validar rango razonable
+        {
+            speedVALUE = newSpeed;
+            juce::Logger::writeToLog("Speed actualizado: " + juce::String(speedVALUE));
+            
+            // Si está reproduciendo, la velocidad de scroll se actualizará automáticamente
+            if (isPlaying)
+            {
+                juce::Logger::writeToLog("Velocidad de scroll actualizada por cambio de Speed");
+            }
+        }
     }
 }
 
@@ -408,15 +475,80 @@ void DrumVisualizerAudioProcessorEditor::updateUIAfterMidiLoad()
             updateBpmValue();
         }
         
-        showPianoRoll = true;
+        // Log información del archivo cargado para debug
+        double totalLength = audioProcessor.getLengthInSeconds();
+        int totalTracks = audioProcessor.getNumTracks();
+        juce::Logger::writeToLog("MIDI cargado - Duración: " + juce::String(totalLength, 2) + "s, Pistas: " + juce::String(totalTracks));
+        
+        // Resetear la posición de reproducción
+        resetToBeginning();
         repaint(); // Redibujar para mostrar el piano roll
     }
 }
 
 //==============================================================================
-// Métodos para el piano roll
+// Control de reproducción
 
-void DrumVisualizerAudioProcessorEditor::drawPianoRoll(juce::Graphics& g, const juce::Rectangle<int>& area)
+void DrumVisualizerAudioProcessorEditor::startPlayback()
+{
+    if (!audioProcessor.hasMidiLoaded())
+        return;
+        
+    isPlaying = true;
+    playPauseButton.setButtonText("PAUSE");
+    
+    // Inicializar variables de tiempo
+    lastUpdateTime = juce::Time::getMillisecondCounter();
+    playbackStartTime = currentTime;
+    
+    // Iniciar el timer con 60 FPS para animación fluida
+    startTimer(16); // ~60 FPS (1000ms / 60 = 16.67ms)
+    
+    juce::Logger::writeToLog("Reproducción iniciada desde tiempo: " + juce::String(currentTime, 2) + "s");
+}
+
+void DrumVisualizerAudioProcessorEditor::pausePlayback()
+{
+    isPlaying = false;
+    playPauseButton.setButtonText("PLAY");
+    stopTimer();
+    
+    juce::Logger::writeToLog("Reproducción pausada en tiempo: " + juce::String(currentTime, 2) + "s");
+}
+
+void DrumVisualizerAudioProcessorEditor::stopPlayback()
+{
+    isPlaying = false;
+    playPauseButton.setButtonText("PLAY");
+    stopTimer();
+    resetToBeginning();
+    
+    juce::Logger::writeToLog("Reproducción detenida y reiniciada");
+}
+
+void DrumVisualizerAudioProcessorEditor::resetToBeginning()
+{
+    currentTime = 0.0;
+    lastUpdateTime = 0;
+    repaint();
+}
+
+//==============================================================================
+// Cálculo de velocidad de scroll
+
+double DrumVisualizerAudioProcessorEditor::getScrollSpeed() const
+{
+    // La velocidad base se basa en el BPM
+    // A 120 BPM, queremos una velocidad de scroll de 1.0 (tiempo real)
+    // El speedComboBox multiplica esta velocidad base
+    double baseBeatRate = bpmVALUE / 120.0; // Normalizar contra 120 BPM
+    return baseBeatRate * speedVALUE;
+}
+
+//==============================================================================
+// Métodos para el piano roll estilo Synthesia
+
+void DrumVisualizerAudioProcessorEditor::drawSynthesiaPianoRoll(juce::Graphics& g, const juce::Rectangle<int>& area)
 {
     if (!audioProcessor.hasMidiLoaded())
         return;
@@ -443,18 +575,24 @@ void DrumVisualizerAudioProcessorEditor::drawPianoRoll(juce::Graphics& g, const 
     auto keyArea = workingArea.removeFromLeft(keyWidth);
     auto noteArea = workingArea;
 
+    // Calcular posición de la línea objetivo
+    targetLineX = keyArea.getRight() + static_cast<int>(noteArea.getWidth() * 0.25f);
+
     // Dibujar las teclas del piano
     drawPianoKeys(g, keyArea, lowestNote, highestNote);
     
     // Dibujar fondo del área de notas
-    g.setColour(juce::Colour(0xff2a2a2a));
+    g.setColour(juce::Colour(0xff1a1a1a));
     g.fillRect(noteArea);
     
-    // Dibujar grid de tiempo
-    drawTimeGrid(g, noteArea);
+    // Dibujar escala de tiempo
+    drawTimeScale(g, noteArea);
     
-    // Dibujar las notas MIDI
-    drawMidiNotes(g, noteArea, lowestNote, highestNote);
+    // Dibujar las notas MIDI animadas
+    drawAnimatedMidiNotes(g, noteArea, lowestNote, highestNote);
+    
+    // Dibujar línea objetivo (donde "caen" las notas)
+    drawTargetLine(g, noteArea);
 }
 
 void DrumVisualizerAudioProcessorEditor::drawPianoKeys(juce::Graphics& g, const juce::Rectangle<int>& keyArea, int lowestNote, int highestNote)
@@ -502,15 +640,23 @@ void DrumVisualizerAudioProcessorEditor::drawPianoKeys(juce::Graphics& g, const 
     }
 }
 
-void DrumVisualizerAudioProcessorEditor::drawMidiNotes(juce::Graphics& g, const juce::Rectangle<int>& noteArea, int lowestNote, int highestNote)
+void DrumVisualizerAudioProcessorEditor::drawAnimatedMidiNotes(juce::Graphics& g, const juce::Rectangle<int>& noteArea, int lowestNote, int highestNote)
 {
     if (!audioProcessor.hasMidiLoaded())
         return;
 
     const auto& midiFile = audioProcessor.getMidiFile();
     
-    // Simplificar: dibujar todas las notas como eventos discretos sin intentar emparejar Note On/Off
-    // Esto es más adecuado para visualización de batería donde las notas son típicamente cortas
+    // Ampliar significativamente la ventana de tiempo visible
+    double windowStart = currentTime - 1.0; // Mostrar notas 1s antes del tiempo actual
+    double windowEnd = currentTime + 12.0; // Ventana de scroll mucho más amplia (12 segundos adelante)
+    
+    // Si no estamos reproduciendo, mostrar todo el archivo desde el inicio
+    if (!isPlaying)
+    {
+        windowStart = 0.0;
+        windowEnd = std::max(12.0, audioProcessor.getLengthInSeconds());
+    }
     
     // Iterar sobre todas las pistas
     for (int track = 0; track < midiFile.getNumTracks(); ++track)
@@ -528,30 +674,48 @@ void DrumVisualizerAudioProcessorEditor::drawMidiNotes(juce::Graphics& g, const 
                 if (event.isNoteOn() && event.getVelocity() > 0)
                 {
                     int noteNumber = event.getNoteNumber();
+                    double noteTime = event.getTimeStamp();
                     
-                    // Verificar si la nota está en el rango visible
-                    if (noteNumber >= lowestNote && noteNumber <= highestNote)
+                    // Solo dibujar notas que están en la ventana de tiempo visible
+                    if (noteTime >= windowStart && noteTime <= windowEnd &&
+                        noteNumber >= lowestNote && noteNumber <= highestNote)
                     {
-                        // Obtener timestamp del mensaje MIDI
-                        double timeStamp = event.getTimeStamp();
                         float velocity = (float)event.getVelocity() / 127.0f;
                         
-                        // Calcular posición
-                        float x = (float)timeToX(timeStamp, noteArea);
+                        // Calcular posición X animada
+                        float x = (float)timeToAnimatedX(noteTime, noteArea, windowEnd - currentTime);
                         float y = (float)noteToY(noteNumber, lowestNote, highestNote, noteArea);
                         
-                        // Tamaño de la nota (ancho fijo para eventos discretos)
-                        float noteWidth = 8.0f; // Ancho fijo para notas de batería
-                        float height = (float)noteArea.getHeight() / (float)(highestNote - lowestNote + 1) * 0.8f;
-                        
-                        // Color basado en la velocidad
-                        juce::Colour noteColor = juce::Colour::fromHSV(0.6f, 0.8f, 0.3f + velocity * 0.7f, 1.0f);
-                        g.setColour(noteColor);
-                        g.fillRoundedRectangle(x, y, noteWidth, height, 2.0f);
-                        
-                        // Borde de la nota
-                        g.setColour(noteColor.brighter(0.3f));
-                        g.drawRoundedRectangle(x, y, noteWidth, height, 2.0f, 1.0f);
+                        // Solo dibujar si la nota está dentro del área visible
+                        if (x >= noteArea.getX() - 25 && x <= noteArea.getRight() + 25)
+                        {
+                            // Tamaño de la nota
+                            float noteWidth = 20.0f; // Más ancho para mejor visibilidad
+                            float height = (float)noteArea.getHeight() / (float)(highestNote - lowestNote + 1) * 0.8f;
+                            
+                            // Color basado en la velocidad con efecto de brillo
+                            juce::Colour baseColor = juce::Colour::fromHSV(0.6f, 0.9f, 0.4f + velocity * 0.6f, 1.0f);
+                            
+                            // Efecto de resplandor para notas que están cerca de la línea objetivo
+                            float distanceToTarget = std::abs(x - targetLineX);
+                            float maxGlowDistance = 50.0f;
+                            if (distanceToTarget < maxGlowDistance)
+                            {
+                                float glowIntensity = 1.0f - (distanceToTarget / maxGlowDistance);
+                                baseColor = baseColor.brighter(glowIntensity * 0.3f);
+                            }
+                            
+                            // Dibujar nota con efecto de resplandor
+                            g.setColour(baseColor.withAlpha(0.3f));
+                            g.fillRoundedRectangle(x - 2, y - 2, noteWidth + 4, height + 4, 4.0f);
+                            
+                            g.setColour(baseColor);
+                            g.fillRoundedRectangle(x, y, noteWidth, height, 3.0f);
+                            
+                            // Borde brillante
+                            g.setColour(baseColor.brighter(0.4f));
+                            g.drawRoundedRectangle(x, y, noteWidth, height, 3.0f, 2.0f);
+                        }
                     }
                 }
             }
@@ -559,45 +723,80 @@ void DrumVisualizerAudioProcessorEditor::drawMidiNotes(juce::Graphics& g, const 
     }
 }
 
-void DrumVisualizerAudioProcessorEditor::drawTimeGrid(juce::Graphics& g, const juce::Rectangle<int>& area)
+void DrumVisualizerAudioProcessorEditor::drawTargetLine(juce::Graphics& g, const juce::Rectangle<int>& area)
 {
-    double totalLength = audioProcessor.getLengthInSeconds();
-    if (totalLength <= 0)
-        return;
+    // Dibujar línea objetivo vertical brillante
+    int lineX = targetLineX;
     
-    g.setColour(juce::Colour(0xff404040));
+    // Efecto de resplandor
+    g.setColour(juce::Colours::white.withAlpha(0.3f));
+    g.fillRect(lineX - 3, area.getY(), 7, area.getHeight());
     
-    // Dibujar líneas verticales cada segundo
-    double interval = 1.0; // 1 segundo
-    if (totalLength > 60) interval = 5.0; // 5 segundos si es muy largo
-    if (totalLength > 300) interval = 10.0; // 10 segundos si es muy muy largo
+    g.setColour(juce::Colours::white.withAlpha(0.6f));
+    g.fillRect(lineX - 2, area.getY(), 5, area.getHeight());
     
-    for (double time = 0; time <= totalLength; time += interval)
+    // Línea principal
+    g.setColour(juce::Colours::white);
+    g.fillRect(lineX - 1, area.getY(), 3, area.getHeight());
+}
+
+void DrumVisualizerAudioProcessorEditor::drawTimeScale(juce::Graphics& g, const juce::Rectangle<int>& area)
+{
+    // Dibujar líneas de tiempo futuras que se acercan
+    g.setColour(juce::Colour(0xff333333));
+    
+    double scrollSpeed = getScrollSpeed();
+    double beatsPerSecond = (bpmVALUE / 60.0) * scrollSpeed;
+    double beatInterval = 1.0 / beatsPerSecond; // Segundos por beat
+    
+    // Usar ventana ampliada para mostrar más beats
+    double windowWidth = isPlaying ? 12.0 : std::max(12.0, audioProcessor.getLengthInSeconds());
+    
+    // Dibujar líneas de compás que se mueven
+    for (double futureTime = currentTime; futureTime <= currentTime + windowWidth; futureTime += beatInterval)
     {
-        int x = (int)timeToX(time, area);
+        float x = (float)timeToAnimatedX(futureTime, area, windowWidth);
         if (x >= area.getX() && x <= area.getRight())
         {
-            g.drawVerticalLine(x, (float)area.getY(), (float)area.getBottom());
-            
-            // Dibujar marca de tiempo
-            g.setColour(juce::Colours::lightgrey);
-            g.setFont(juce::Font(juce::FontOptions(10.0f)));
-            g.drawText(juce::String(time, 1) + "s", 
-                      x + 2, area.getY(), 50, 15, 
-                      juce::Justification::centredLeft, true);
-            g.setColour(juce::Colour(0xff404040));
+            g.drawVerticalLine((int)x, (float)area.getY(), (float)area.getBottom());
         }
     }
 }
 
-double DrumVisualizerAudioProcessorEditor::timeToX(double timeInSeconds, const juce::Rectangle<int>& area) const
+//==============================================================================
+// Funciones de conversión para animación
+
+double DrumVisualizerAudioProcessorEditor::timeToAnimatedX(double noteTime, const juce::Rectangle<int>& area) const
 {
-    double totalLength = audioProcessor.getLengthInSeconds();
-    if (totalLength <= 0)
-        return (double)area.getX();
-    
-    double ratio = timeInSeconds / totalLength;
-    return (double)area.getX() + ratio * (double)area.getWidth();
+    // Versión original para compatibility
+    return timeToAnimatedX(noteTime, area, noteScrollWidth);
+}
+
+double DrumVisualizerAudioProcessorEditor::timeToAnimatedX(double noteTime, const juce::Rectangle<int>& area, double windowWidth) const
+{
+    if (!isPlaying)
+    {
+        // Vista estática: mostrar todas las notas del MIDI proporcionalmente
+        double totalLength = audioProcessor.getLengthInSeconds();
+        if (totalLength > 0)
+        {
+            double ratio = noteTime / totalLength;
+            return area.getX() + (ratio * area.getWidth());
+        }
+        return area.getX();
+    }
+    else
+    {
+        // Vista animada: las notas se mueven de derecha a izquierda
+        // La línea objetivo está a targetLineX
+        // Las notas futuras aparecen desde la derecha
+        
+        double timeUntilNote = noteTime - currentTime;
+        double scrollPixelsPerSecond = (double)area.getWidth() / windowWidth;
+        
+        // Posición X: línea objetivo + (tiempo hasta nota * pixels por segundo)
+        return targetLineX + (timeUntilNote * scrollPixelsPerSecond);
+    }
 }
 
 int DrumVisualizerAudioProcessorEditor::noteToY(int noteNumber, int lowestNote, int highestNote, const juce::Rectangle<int>& area) const

@@ -195,7 +195,7 @@ bool DrumVisualizerAudioProcessor::loadMidiFile(const juce::File& file)
         return false;
     }
     
-    // Verifica la extensión del archivo
+    // Verifica la extensiÃ³n del archivo
     juce::String extension = file.getFileExtension().toLowerCase();
     if (extension != ".mid" && extension != ".midi")
     {
@@ -215,20 +215,20 @@ bool DrumVisualizerAudioProcessor::loadMidiFile(const juce::File& file)
     midiFile.clear();
     if (!midiFile.readFrom(inputStream))
     {
-        juce::Logger::writeToLog("Error: No se pudo leer el archivo MIDI - Archivo posiblemente dañado");
+        juce::Logger::writeToLog("Error: No se pudo leer el archivo MIDI - Archivo posiblemente daÃ±ado");
         return false;
     }
     
-    // Si llegamos aquí, la carga fue exitosa
+    // Si llegamos aquÃ­, la carga fue exitosa
     loadedMidiFile = file;
     midiLoaded = true;
     
-    // Log información del archivo cargado
+    // Log informaciÃ³n del archivo cargado
     juce::Logger::writeToLog("MIDI cargado exitosamente:");
     juce::Logger::writeToLog("  Archivo: " + file.getFileName());
-    juce::Logger::writeToLog("  Número de pistas: " + juce::String(getNumTracks()));
+    juce::Logger::writeToLog("  NÃºmero de pistas: " + juce::String(getNumTracks()));
     juce::Logger::writeToLog("  Tempo: " + juce::String(getTempoFromMidi(), 2) + " BPM");
-    juce::Logger::writeToLog("  Duración: " + juce::String(getLengthInSeconds(), 2) + " segundos");
+    juce::Logger::writeToLog("  DuraciÃ³n: " + juce::String(getLengthInSeconds(), 2) + " segundos");
     juce::Logger::writeToLog("  Rango de notas: " + juce::String(getLowestNote()) + " - " + juce::String(getHighestNote()));
     
     return true;
@@ -251,7 +251,7 @@ juce::String DrumVisualizerAudioProcessor::getLoadedFileName() const
 {
     if (midiLoaded)
         return loadedMidiFile.getFileName();
-    return "Ningún archivo cargado";
+    return "NingÃºn archivo cargado";
 }
 
 int DrumVisualizerAudioProcessor::getNumTracks() const
@@ -336,7 +336,7 @@ int DrumVisualizerAudioProcessor::getLowestNote() const
     if (!midiLoaded)
         return 0;
     
-    int lowestNote = 127; // Valor máximo MIDI
+    int lowestNote = 127; // Valor mÃ¡ximo MIDI
     bool foundNote = false;
     
     // Iterar sobre todas las pistas
@@ -368,7 +368,7 @@ int DrumVisualizerAudioProcessor::getHighestNote() const
     if (!midiLoaded)
         return 127;
     
-    int highestNote = 0; // Valor mínimo MIDI
+    int highestNote = 0; // Valor mÃ­nimo MIDI
     bool foundNote = false;
     
     // Iterar sobre todas las pistas

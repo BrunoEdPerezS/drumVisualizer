@@ -16,7 +16,8 @@
 */
 class DrumVisualizerAudioProcessorEditor : public juce::AudioProcessorEditor, 
                                             public juce::TextEditor::Listener,
-                                            public juce::ComboBox::Listener
+                                            public juce::ComboBox::Listener,
+                                            public juce::Timer
 {
 public:
     DrumVisualizerAudioProcessorEditor (DrumVisualizerAudioProcessor&);
@@ -24,6 +25,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void timerCallback() override;
 
     // Listener overrides para el patrón observer
     void textEditorTextChanged (juce::TextEditor& editor) override;
@@ -50,11 +52,17 @@ private:
     juce::Label timeFigLabel; // Label para "TIME FIGURE"
     juce::ComboBox timeFigComboBox; // Lista desplegable para Time Fig
 
-    // Variables para el piano roll
+    // Variables para el piano roll animado (estilo Synthesia)
     juce::Rectangle<int> pianoRollArea;
-    double timeZoom = 100.0; // Pixels per second
-    int noteHeight = 10; // Altura de cada nota en pixels
-    bool showPianoRoll = false;
+    double currentTime = 0.0; // Tiempo actual de reproducción
+    bool isPlaying = false;
+    double pixelsPerSecond = 200.0; // Velocidad de scroll base
+    int targetLineX = 0; // Posición X de la línea objetivo (donde "caen" las notas)
+    double noteScrollWidth = 12.0; // Ancho en segundos de la ventana de scroll (ampliado para ver más notas)
+    
+    // Variables de control de tiempo
+    juce::int64 lastUpdateTime = 0;
+    double playbackStartTime = 0.0;
 
     // Métodos privados para manejar cambios
     void updateBpmValue();
@@ -68,14 +76,27 @@ private:
     void showMessage(const juce::String& title, const juce::String& message);
     void updateUIAfterMidiLoad();
 
-    // Métodos para el piano roll
-    void drawPianoRoll(juce::Graphics& g, const juce::Rectangle<int>& area);
+    // Métodos para el piano roll estilo Synthesia
+    void drawSynthesiaPianoRoll(juce::Graphics& g, const juce::Rectangle<int>& area);
     void drawPianoKeys(juce::Graphics& g, const juce::Rectangle<int>& keyArea, int lowestNote, int highestNote);
-    void drawMidiNotes(juce::Graphics& g, const juce::Rectangle<int>& noteArea, int lowestNote, int highestNote);
-    void drawTimeGrid(juce::Graphics& g, const juce::Rectangle<int>& area);
-    double timeToX(double timeInSeconds, const juce::Rectangle<int>& area) const;
+    void drawAnimatedMidiNotes(juce::Graphics& g, const juce::Rectangle<int>& noteArea, int lowestNote, int highestNote);
+    void drawTargetLine(juce::Graphics& g, const juce::Rectangle<int>& area);
+    void drawTimeScale(juce::Graphics& g, const juce::Rectangle<int>& area);
+    
+    // Funciones de conversión para animación
+    double timeToAnimatedX(double noteTime, const juce::Rectangle<int>& area) const;
+    double timeToAnimatedX(double noteTime, const juce::Rectangle<int>& area, double windowWidth) const;
     int noteToY(int noteNumber, int lowestNote, int highestNote, const juce::Rectangle<int>& area) const;
     juce::String getNoteNameFromNumber(int noteNumber) const;
+    
+    // Control de reproducción
+    void startPlayback();
+    void pausePlayback();
+    void stopPlayback();
+    void resetToBeginning();
+    
+    // Cálculo de velocidad de scroll
+    double getScrollSpeed() const;
 
     // Variables para manejo de archivos
     juce::String lastBrowsedDirectory;
