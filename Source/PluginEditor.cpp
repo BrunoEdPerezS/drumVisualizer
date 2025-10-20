@@ -480,8 +480,35 @@ void DrumVisualizerAudioProcessorEditor::updateUIAfterMidiLoad()
         int totalTracks = audioProcessor.getNumTracks();
         juce::Logger::writeToLog("MIDI cargado - Duración: " + juce::String(totalLength, 2) + "s, Pistas: " + juce::String(totalTracks));
         
-        // Resetear la posición de reproducción
-        resetToBeginning();
+        // Alinear la primera nota a la línea de reproducción en modo STOP
+        // y preparar la vista para mostrar desde la primera nota
+        auto midiFile = audioProcessor.getMidiFile();
+        double firstNoteTime = std::numeric_limits<double>::infinity();
+        for (int track = 0; track < midiFile.getNumTracks(); ++track)
+        {
+            const auto* trackPtr = midiFile.getTrack(track);
+            if (trackPtr != nullptr)
+            {
+                for (int i = 0; i < trackPtr->getNumEvents(); ++i)
+                {
+                    const auto& event = trackPtr->getEventPointer(i)->message;
+                    if (event.isNoteOn() && event.getVelocity() > 0)
+                    {
+                        firstNoteTime = std::min(firstNoteTime, event.getTimeStamp());
+                    }
+                }
+            }
+        }
+
+        if (firstNoteTime == std::numeric_limits<double>::infinity())
+            firstNoteTime = 0.0;
+
+        // Colocar la posición actual en la primera nota (para que en STOP quede alineada con la línea objetivo)
+        currentTime = firstNoteTime;
+        lastUpdateTime = 0;
+        isPlaying = false;
+
+        // Resetear la posición de reproducción visual y redibujar
         repaint(); // Redibujar para mostrar el piano roll
     }
 }
@@ -521,9 +548,42 @@ void DrumVisualizerAudioProcessorEditor::stopPlayback()
     isPlaying = false;
     playPauseButton.setButtonText("PLAY");
     stopTimer();
-    resetToBeginning();
+
+    // En lugar de reiniciar a 0, alinear la primera nota del clip con la línea de reproducción
+    if (audioProcessor.hasMidiLoaded())
+    {
+        const auto& midiFile = audioProcessor.getMidiFile();
+        double firstNoteTime = std::numeric_limits<double>::infinity();
+        for (int track = 0; track < midiFile.getNumTracks(); ++track)
+        {
+            const auto* trackPtr = midiFile.getTrack(track);
+            if (trackPtr != nullptr)
+            {
+                for (int i = 0; i < trackPtr->getNumEvents(); ++i)
+                {
+                    const auto& event = trackPtr->getEventPointer(i)->message;
+                    if (event.isNoteOn() && event.getVelocity() > 0)
+                    {
+                        firstNoteTime = std::min(firstNoteTime, event.getTimeStamp());
+                    }
+                }
+            }
+        }
+
+        if (firstNoteTime == std::numeric_limits<double>::infinity())
+            firstNoteTime = 0.0;
+
+        currentTime = firstNoteTime;
+    }
+    else
+    {
+        currentTime = 0.0;
+    }
+
+    lastUpdateTime = 0;
+    repaint();
     
-    juce::Logger::writeToLog("Reproducción detenida y reiniciada");
+    juce::Logger::writeToLog("Reproducción detenida y posicionada al inicio del clip");
 }
 
 void DrumVisualizerAudioProcessorEditor::resetToBeginning()
@@ -651,13 +711,16 @@ void DrumVisualizerAudioProcessorEditor::drawAnimatedMidiNotes(juce::Graphics& g
     double windowStart = currentTime - 1.0; // Mostrar notas 1s antes del tiempo actual
     double windowEnd = currentTime + 12.0; // Ventana de scroll mucho más amplia (12 segundos adelante)
     
-    // Si no estamos reproduciendo, mostrar todo el archivo desde el inicio
+    // Si no estamos reproduciendo, mostrar solo las notas a partir de currentTime (no mostrar notas a la izquierda de la línea de reproducción)
     if (!isPlaying)
     {
-        windowStart = 0.0;
-        windowEnd = std::max(12.0, audioProcessor.getLengthInSeconds());
+        // Evitar mostrar notas anteriores a la posición actual: en pausa la vista se congela en currentTime
+        windowStart = currentTime;
+        // Mostrar al menos 12 segundos hacia delante o hasta el final del clip
+        double remainingLength = std::max(12.0, std::max(0.0, audioProcessor.getLengthInSeconds() - currentTime));
+        windowEnd = currentTime + remainingLength;
     }
-    
+
     // Iterar sobre todas las pistas
     for (int track = 0; track < midiFile.getNumTracks(); ++track)
     {
@@ -685,6 +748,10 @@ void DrumVisualizerAudioProcessorEditor::drawAnimatedMidiNotes(juce::Graphics& g
                         // Calcular posición X animada
                         float x = (float)timeToAnimatedX(noteTime, noteArea, windowEnd - currentTime);
                         float y = (float)noteToY(noteNumber, lowestNote, highestNote, noteArea);
+                        
+                        // Asegurar que no se muestre ninguna nota a la izquierda de la línea objetivo
+                        if (x < targetLineX)
+                            continue;
                         
                         // Solo dibujar si la nota está dentro del área visible
                         if (x >= noteArea.getX() - 25 && x <= noteArea.getRight() + 25)
@@ -776,14 +843,13 @@ double DrumVisualizerAudioProcessorEditor::timeToAnimatedX(double noteTime, cons
 {
     if (!isPlaying)
     {
-        // Vista estática: mostrar todas las notas del MIDI proporcionalmente
-        double totalLength = audioProcessor.getLengthInSeconds();
-        if (totalLength > 0)
-        {
-            double ratio = noteTime / totalLength;
-            return area.getX() + (ratio * area.getWidth());
-        }
-        return area.getX();
+        // Vista en STOP: usar la misma lógica de animación pero centrada en currentTime
+        // Esto permite alinear la primera nota con la línea objetivo cuando currentTime fue ajustado
+        double timeUntilNote = noteTime - currentTime;
+        // Proteger división por cero
+        double effectiveWindow = (windowWidth <= 0.0) ? noteScrollWidth : windowWidth;
+        double scrollPixelsPerSecond = (double)area.getWidth() / effectiveWindow;
+        return targetLineX + (timeUntilNote * scrollPixelsPerSecond);
     }
     else
     {

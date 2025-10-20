@@ -218,7 +218,11 @@ bool DrumVisualizerAudioProcessor::loadMidiFile(const juce::File& file)
         juce::Logger::writeToLog("Error: No se pudo leer el archivo MIDI - Archivo posiblemente dañado");
         return false;
     }
-    
+
+    // Convertir timestamps de ticks a segundos para uso en la UI/animación
+    // Esto asegura que event.getTimeStamp() devuelva tiempos en segundos
+    midiFile.convertTimestampTicksToSeconds();
+
     // Si llegamos aquí, la carga fue exitosa
     loadedMidiFile = file;
     midiLoaded = true;
